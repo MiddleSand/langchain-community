@@ -21,7 +21,8 @@ class InfinityEmbeddings(BaseModel, Embeddings):
     This also works for text-embeddings-inference and other
     self-hosted openai-compatible servers.
 
-    Infinity is a package to interact with Embedding Models on https://github.com/michaelfeil/infinity
+    Infinity is a package to interact with Embedding Models on https://github.com/michaelfeil/infinity, optionally
+    secured with an API key.
 
 
     Example:
@@ -30,7 +31,17 @@ class InfinityEmbeddings(BaseModel, Embeddings):
             from langchain_community.embeddings import InfinityEmbeddings
             InfinityEmbeddings(
                 model="BAAI/bge-small",
+                infinity_api_url="http://localhost:7997"
+            )
+
+    Authenticated example:
+        .. code-block:: python
+
+            from langchain_community.embeddings import InfinityEmbeddings
+            InfinityEmbeddings(
+                model="BAAI/bge-small",
                 infinity_api_url="http://localhost:7997",
+                infinity_api_key="secret_key_here"
             )
     """
 
@@ -39,6 +50,9 @@ class InfinityEmbeddings(BaseModel, Embeddings):
 
     infinity_api_url: str = "http://localhost:7997"
     """Endpoint URL to use."""
+
+    infinity_api_key: str = ""
+    """(Optional) API key for the URL provided"""
 
     client: Any = None  #: :meta private:
     """Infinity client."""
@@ -56,9 +70,13 @@ class InfinityEmbeddings(BaseModel, Embeddings):
         values["infinity_api_url"] = get_from_dict_or_env(
             values, "infinity_api_url", "INFINITY_API_URL"
         )
+        values["infinity_api_key"] = get_from_dict_or_env(
+            values, "infinity_api_key", "infinity_api_key"
+        )
 
         values["client"] = TinyAsyncOpenAIInfinityEmbeddingClient(
             host=values["infinity_api_url"],
+            key=values["infinity_api_key"]
         )
         return values
 
@@ -141,11 +159,13 @@ class TinyAsyncOpenAIInfinityEmbeddingClient:  #: :meta private:
     """
 
     def __init__(
-        self,
-        host: str = "http://localhost:7797/v1",
-        aiosession: Optional[aiohttp.ClientSession] = None,
+            self,
+            host: str = "http://localhost:7797/v1",
+            key: str = None,
+            aiosession: Optional[aiohttp.ClientSession] = None,
     ) -> None:
         self.host = host
+        self.key = key
         self.aiosession = aiosession
 
         if self.host is None or len(self.host) < 3:
@@ -226,12 +246,22 @@ class TinyAsyncOpenAIInfinityEmbeddingClient:  #: :meta private:
         Returns:
             Dict[str, Collection[str]]: _description_
         """
-        return dict(
-            url=f"{self.host}/embeddings",
-            headers={
+
+        if self.key:
+            headers = {
                 # "accept": "application/json",
                 "content-type": "application/json",
-            },
+                "Authorization": f"Bearer {self.key}"
+            }
+        else:
+            headers = {
+                # "accept": "application/json",
+                "content-type": "application/json",
+
+            }
+        return dict(
+            url=f"{self.host}/embeddings",
+            headers=headers,
             json=dict(
                 input=texts,
                 model=model,
@@ -307,7 +337,7 @@ class TinyAsyncOpenAIInfinityEmbeddingClient:  #: :meta private:
 
         # Request
         async with aiohttp.ClientSession(
-            trust_env=True, connector=aiohttp.TCPConnector(limit=32)
+                trust_env=True, connector=aiohttp.TCPConnector(limit=32)
         ) as session:
             embeddings_batch_perm = await asyncio.gather(
                 *[
